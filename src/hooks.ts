@@ -20,7 +20,3 @@ export const useCreated = (callback: () => void) => {
   created.current = true;
   callback();
 };
-
-export const useWillUnmount = (callback: () => void) => {
-  useEffect(() => callback, []);
-};

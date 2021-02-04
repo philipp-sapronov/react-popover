@@ -1,9 +1,6 @@
 // # Scroll lock management
 
 // Is a vertical scrollbar displayed?
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import {useMemo} from 'react';
-
 function isOverflowing(container = document.body): boolean {
   if (document.body === container) {
     return window.innerWidth > document.documentElement.clientWidth;
@@ -32,48 +29,81 @@ function getPaddingRight(element: HTMLElement): number {
   return parseInt(window.getComputedStyle(element).paddingRight, 10) || 0;
 }
 
-class ScrollLock {
-  scrollbarSize = getScrollbarSize(document);
+function setPaddingRight(selectors: string[], scrollbarSize: number): void {
+  if (!isOverflowing()) return;
 
-  constructor(private selectors: string[]) {}
+  selectors.forEach((selector) => {
+    const element = document.querySelector(selector) as HTMLElement | null;
 
-  get isOverflowing() {
+    if (element) {
+      element.style.paddingRight = `${getPaddingRight(element) + scrollbarSize}px`;
+    }
+  });
+}
+
+interface ScrollLock {
+  lock: () => void;
+  unlock: () => void;
+  isOverflowing: boolean;
+  scrollbarSize: number;
+}
+
+export class ScrollLockManager implements ScrollLock {
+  private static $scrollbarSize: number;
+  private $disabled: boolean;
+  private $isLock: boolean;
+
+  constructor(private selectors: string[]) {
+    ScrollLockManager.$scrollbarSize = ScrollLockManager.$scrollbarSize ?? getScrollbarSize(document);
+    this.$disabled = false;
+    this.$isLock = false;
+  }
+
+  public get disabled() {
+    return this.$disabled;
+  }
+
+  public set disabled(disabled: boolean) {
+    if (this.$disabled === disabled) return;
+
+    disabled ? this.$unlock() : this.$lock();
+
+    this.$disabled = disabled;
+  }
+
+  public get scrollbarSize() {
+    return ScrollLockManager.$scrollbarSize;
+  }
+
+  public get isOverflowing() {
     return isOverflowing();
   }
 
-  lock() {
-    if (isOverflowing()) {
-      this.addPadding();
-    }
+  private $lock() {
+    if (this.$isLock) return;
+    if (this.$disabled) return;
 
+    setPaddingRight(this.selectors, ScrollLockManager.$scrollbarSize);
     document.body.style.overflow = 'hidden';
+    this.$isLock = true;
   }
 
-  unlock() {
+  private $unlock() {
+    if (!this.$isLock) return;
+
+    // Order is matters
     document.body.style.overflow = 'inherit';
-
-    if (isOverflowing()) {
-      this.subtractPadding();
-    }
+    setPaddingRight(this.selectors, -Math.abs(ScrollLockManager.$scrollbarSize));
+    this.$isLock = false;
   }
 
-  private addPadding(): void {
-    this.selectors.forEach((selector) => {
-      const element = document.querySelector(selector) as HTMLElement | null;
-      if (!element) return;
-      element.style.paddingRight = `${getPaddingRight(element) + this.scrollbarSize}px`;
-    });
+  public lock() {
+    if (this.$disabled) return;
+    this.$lock();
   }
 
-  private subtractPadding(): void {
-    this.selectors.forEach((selector) => {
-      const element = document.querySelector(selector) as HTMLElement | null;
-      if (!element) return;
-      element.style.paddingRight = `${getPaddingRight(element) - this.scrollbarSize}px`;
-    });
+  public unlock() {
+    if (this.$disabled) return;
+    this.$unlock();
   }
 }
-
-export const useScrollLockManager = (selectors: string[]) => {
-  return useMemo(() => new ScrollLock(selectors), []);
-};

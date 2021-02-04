@@ -1,4 +1,4 @@
-import React, {CSSProperties, useEffect, useLayoutEffect, useRef, useState} from 'react';
+import React, {CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {Fade} from '../Reveal/Fade';
 import {Portal} from './Portal';
 import {
@@ -10,23 +10,46 @@ import {
   removeClickListener,
   removeResizeListener,
   stopPropagation,
+  Axis,
+  PositionUtils,
+  AxisOrigin,
 } from './utils';
 import {useIsMounted} from './hooks';
-import {useScrollLockManager} from './scrollLock';
+import {ScrollLockManager} from './scrollLock';
 
-type PlacementX = 'end' | 'center' | 'start';
-type PlacementY = 'top' | 'center' | 'bottom';
+type PlacementX = 'before' | 'end' | 'center' | 'start' | 'after';
+type PlacementY = 'before' | 'end' | 'center' | 'start' | 'after';
 
 type Placement =
-  | 'start-top'
-  | 'center-top'
-  | 'end-top'
+  | 'before-after'
+  | 'start-after'
+  | 'center-after'
+  | 'end-after'
+  | 'after-after'
+  //
+  | 'before-start'
+  | 'start-start'
+  | 'center-start'
+  | 'end-start'
+  | 'after-start'
+  //
+  | 'before-center'
   | 'start-center'
   | 'center-center'
   | 'end-center'
-  | 'start-bottom'
-  | 'center-bottom'
-  | 'end-bottom';
+  | 'after-center'
+  //
+  | 'before-end'
+  | 'start-end'
+  | 'center-end'
+  | 'end-end'
+  | 'after-end'
+  //
+  | 'before-before'
+  | 'start-before'
+  | 'center-before'
+  | 'end-before'
+  | 'after-before';
 
 export type PopoverProps = {
   anchorEl?: HTMLElement;
@@ -41,42 +64,20 @@ export type PopoverProps = {
   placement?: Placement;
   trigger: React.ReactNode;
   zIndex?: number;
-};
-
-const baseStyles: CSSProperties = {
-  position: 'fixed',
-};
-
-const positionXUtils = {
-  center(triggerRect: ClientRect, popoverRect: ClientRect, offsetX = 0) {
-    return {left: triggerRect.left + triggerRect.width / 2 - popoverRect.width / 2 + offsetX};
-  },
-  start(triggerRect: ClientRect, popoverRect: ClientRect, offsetX = 0) {
-    return {left: triggerRect.left + offsetX};
-  },
-  end(triggerRect: ClientRect, popoverRect: ClientRect, offsetX = 0) {
-    return {right: window.innerWidth - triggerRect.left - triggerRect.width + offsetX};
-  },
-};
-
-const positionYUtils = {
-  center(triggerRect: ClientRect, popoverRect: ClientRect, offsetY = 0) {
-    return {top: triggerRect.top + triggerRect.height / 2 - popoverRect.height / 2 + offsetY};
-  },
-  top(triggerRect: ClientRect, popoverRect: ClientRect, offsetY = 0) {
-    return {bottom: window.innerHeight - triggerRect.top + offsetY};
-  },
-  bottom(triggerRect: ClientRect, popoverRect: ClientRect, offsetY = 10) {
-    return {top: triggerRect.top + triggerRect.height + offsetY};
-  },
+  disableScrollLock?: boolean;
 };
 
 const getPositionHandlers = (placement: string) => {
   const [x, y] = placement.split('-') as [PlacementX, PlacementY];
-  return [positionXUtils[x], positionYUtils[y]];
+
+  return [PositionUtils[x], PositionUtils[y]];
 };
 
-const PADDING_SELECTORS = ['.page-header', '.page-content', '.page-footer'];
+const getCssPosition = (scrollLockDisabled: boolean) => {
+  return {position: scrollLockDisabled ? ('absolute' as const) : ('fixed' as const)};
+};
+
+const paddingCompensationSelectors = ['.page-header', '.page-content', '.page-footer'];
 
 export const Popover: React.FC<PopoverProps> = ({
   anchorEl,
@@ -87,19 +88,22 @@ export const Popover: React.FC<PopoverProps> = ({
   onClickAway,
   onClose,
   open: $open,
-  placement = 'center-center',
+  placement = 'start-start',
   trigger,
   transitionDuration = 200,
+  disableScrollLock = false,
   zIndex,
 }) => {
-  const scrollManager = useScrollLockManager(PADDING_SELECTORS);
-
   const isMounted = useIsMounted();
   const [internalOpen, setInternalOpen] = useState<boolean>(false);
-  const [style, setStyle] = useState<CSSProperties>(baseStyles);
+  const [style, setStyle] = useState<CSSProperties>(getCssPosition(disableScrollLock));
 
   const triggerRoot = useRef<HTMLDivElement>(null);
   const [contentRoot, setContentRoot] = useState<HTMLDivElement | null>(null);
+
+  const scrollManager = useMemo(() => {
+    return new ScrollLockManager(paddingCompensationSelectors);
+  }, []);
 
   const toggle = (isOpen = !internalOpen) => {
     return isOpen ? handleOpen() : handleClose();
@@ -117,28 +121,14 @@ export const Popover: React.FC<PopoverProps> = ({
     setInternalOpen(false);
 
     setStyle((prevStyle) => {
+      if (scrollManager.disabled) return prevStyle;
       if (!scrollManager.isOverflowing) return prevStyle;
-
-      let xPositionStyle;
-
-      switch (true) {
-        case isNumber(prevStyle.right):
-          xPositionStyle = {right: (prevStyle.right as number) - scrollManager.scrollbarSize};
-          break;
-        case isNumber(prevStyle.left):
-          xPositionStyle = {left: (prevStyle.left as number) + scrollManager.scrollbarSize};
-          break;
-        default:
-          xPositionStyle = {};
-      }
 
       return {
         ...prevStyle,
-        ...xPositionStyle,
+        ...(isNumber(prevStyle.left) ? {left: (prevStyle.left as number) + scrollManager.scrollbarSize} : {}),
       };
     });
-
-    if (isFunction(onClose)) onClose();
   };
 
   const handleClickAway = (e: Event) => {
@@ -167,10 +157,12 @@ export const Popover: React.FC<PopoverProps> = ({
 
     const [getPositionX, getPositionY] = getPositionHandlers(placement);
 
+    const axisOrigin = disableScrollLock ? AxisOrigin.body : AxisOrigin.window;
+
     setStyle({
-      ...baseStyles,
-      ...getPositionX(triggerRect, popoverRect, offsetX),
-      ...getPositionY(triggerRect, popoverRect, offsetY),
+      ...getCssPosition(disableScrollLock),
+      ...getPositionX(Axis.x, axisOrigin, triggerRect, popoverRect, offsetX),
+      ...getPositionY(Axis.y, axisOrigin, triggerRect, popoverRect, offsetY),
     });
   };
 
@@ -181,10 +173,17 @@ export const Popover: React.FC<PopoverProps> = ({
     setStyles();
   }, [internalOpen, contentRoot]);
 
+  useLayoutEffect(() => {
+    scrollManager.disabled = disableScrollLock;
+    setStyles();
+  }, [disableScrollLock]);
+
   useEffect(() => toggle($open), [$open]);
 
   useEffect(() => {
-    if (isMounted && isFunction(onChange)) onChange(internalOpen);
+    if (!isMounted) return;
+    if (isFunction(onChange)) onChange(internalOpen);
+    if (!internalOpen && isFunction(onClose)) onClose();
   }, [internalOpen]);
 
   useEffect(() => {

@@ -1,8 +1,8 @@
-import {useRef} from 'react';
+import {useEffect, useRef} from 'react';
 import ReactDOM from 'react-dom';
 import React from 'react';
 import {createHTMLDivElement, getHTMLBodyElement} from './utils';
-import {useCreated, useWillUnmount} from './hooks';
+import {useCreated} from './hooks';
 
 export type PortalProps = {
   zIndex?: number;
@@ -19,11 +19,14 @@ export const Portal: React.FC<PortalProps> = ({children, zIndex}) => {
     html.current.root.appendChild(html.current.el);
   });
 
-  useWillUnmount(() => {
-    if (!html.current.root || !html.current.el) return;
-    if (!html.current.root?.contains?.(html.current.el)) return;
-    html.current.root.removeChild(html.current.el);
-  });
+  useEffect(
+    () => () => {
+      if (!html.current.root || !html.current.el) return;
+      if (!html.current.root?.contains?.(html.current.el)) return;
+      html.current.root.removeChild(html.current.el);
+    },
+    [],
+  );
 
   return html.current.el ? ReactDOM.createPortal(children, html.current.el) : null;
 };
